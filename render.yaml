@@ -31,6 +31,8 @@ services:
     startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /api/health
     envVars:
+      # Pin a mature Python: the default (3.14) lacks prebuilt wheels
+      # for several pinned libs and failed the build in 12s.
       - key: PYTHON_VERSION
         value: 3.12.4
       # Optional persistent history: create a free Supabase project,
