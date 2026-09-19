@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IIT Delhi — Campus Digital Twin // Command Center</title>
+  <meta name="description" content="Campus Digital Twin — WebSocket command center with predictive analytics" />
+
+  <!-- ============================================================
+       EXTERNAL DEPENDENCIES (CDN)
+       Tailwind CSS  - utility styling
+       Leaflet 1.9.4 - interactive map engine
+       Chart.js 4    - live trend graph
+       ============================================================ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <!-- ============================================================
+       TAILWIND CONFIG — dark-first glassmorphism palette
+       ============================================================ -->
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'ui-sans-serif', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+          colors: {
+            surface: {
+              DEFAULT: '#0b1120',
+              raised:  '#111c30',
+              hover:   '#1a2942',
+            },
+            accent: { DEFAULT: '#38bdf8', soft: '#0ea5e9' },
+          },
+        },
+      },
+    };
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- ============================================================
+       COMPONENT STYLES — radar blips, glass, bars, toasts
+       ============================================================ -->
+  <style>
+    #map { width: 100%; height: 100%; background: #0b1120; outline: none; }
+
+    /* Dark basemap via CSS invert (tile pane only — markers keep true colors) */
+    .leaflet-tile-pane {
+      filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9) saturate(0.45);
+    }
+    .leaflet-container { font-family: 'Inter', system-ui, sans-serif; background: #0b1120; }
+    .leaflet-bar a {
+      background: rgba(17,28,48,.92) !important; color: #cbd5e1 !important;
+      border-bottom: 1px solid rgba(148,163,184,.14) !important; backdrop-filter: blur(6px);
+      width: 34px !important; height: 34px !important; line-height: 34px !important;
+    }
+    .leaflet-bar a:hover { background: rgba(56,189,248,.18) !important; color: #7dd3fc !important; }
+    .leaflet-control-attribution {
+      background: rgba(11,17,32,.55) !important; color: #64748b !important;
+      font-size: 10px !important; border-radius: 6px 0 0 0; padding: 1px 6px !important;
+    }
+    .leaflet-control-attribution a { color: #94a3b8 !important; }
+
+    /* ── Radar blip markers ─────────────────────────────────── */
+    .dt-marker { background: transparent; border: 0; }
+    .dt-marker-inner {
+      position: relative; width: var(--s, 18px); height: var(--s, 18px);
+      display: grid; place-items: center;
+    }
+    .dt-marker-dot {
+      width: 45%; height: 45%; border-radius: 9999px;
+      background: var(--c, #38bdf8);
+      box-shadow: 0 0 10px 2px color-mix(in srgb, var(--c, #38bdf8) 55%, transparent);
+    }
+    .dt-marker-ring {
+      position: absolute; inset: 0; border-radius: 9999px;
+      border: 2px solid var(--c, #38bdf8); opacity: 0;
+      animation: dt-pulse 2.2s ease-out infinite;
+    }
+    @keyframes dt-pulse {
+      0%   { transform: scale(0.55); opacity: .85; }
+      70%  { transform: scale(1.9);  opacity: 0; }
+      100% { transform: scale(1.9);  opacity: 0; }
+    }
+    /* CRITICAL: radar blip runs hot — 1.1s double-echo pulse */
+    .dt-marker-inner.is-critical .dt-marker-ring {
+      animation-duration: 1.1s; border-width: 3px;
+    }
+    .dt-marker-inner.is-critical .dt-marker-dot {
+      box-shadow: 0 0 16px 5px color-mix(in srgb, var(--c, #EF4444) 75%, transparent);
+    }
+    .dt-marker.is-selected .dt-marker-dot {
+      outline: 2px solid rgba(255,255,255,.85); outline-offset: 2px;
+    }
+
+    /* ── Glassmorphism surface ──────────────────────────────── */
+    .glass {
+      background: rgba(11, 17, 32, 0.72);
+      backdrop-filter: blur(12px) saturate(1.25);
+      -webkit-backdrop-filter: blur(12px) saturate(1.25);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      box-shadow: 0 8px 32px rgba(2, 6, 23, 0.5),
+                  inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    /* ── Sidebar collapse + bars + flash ────────────────────── */
+    #sidebar { transition: width .25s ease, transform .25s ease; }
+    .sidebar-content { transition: opacity .18s ease, transform .18s ease; }
+    .sidebar-collapsed .sidebar-content { opacity: 0; transform: translateX(-8px); pointer-events: none; }
+    .dt-bar-fill { transition: width .8s cubic-bezier(.4, 0, .2, 1); }
+
+    @keyframes dt-flash {
+      0%   { box-shadow: 0 0 0 1px rgba(56,189,248,.55), 0 0 24px rgba(56,189,248,.25); }
+      100% { box-shadow: 0 0 0 1px rgba(148,163,184,.08), 0 0 0 rgba(56,189,248,0); }
+    }
+    .dt-flash { animation: dt-flash 1.2s ease-out; }
+
+    /* ── Anomaly banner (cascading event narration) ─────────── */
+    #anomaly-banner { transition: opacity .4s ease, transform .4s cubic-bezier(.2,.8,.2,1); }
+    .anomaly-hidden { opacity: 0; transform: translateY(-14px); pointer-events: none; }
+    @keyframes anomaly-scan {
+      0% { transform: translateX(-100%); } 100% { transform: translateX(320%); }
+    }
+    .anomaly-scanline { animation: anomaly-scan 1.8s linear infinite; }
+
+    /* ── Toasts ─────────────────────────────────────────────── */
+    .dt-toast { pointer-events: auto; opacity: 0; transform: translateY(16px);
+                transition: opacity .3s ease, transform .3s cubic-bezier(.2,.8,.2,1); }
+    .dt-toast.dt-toast-in { opacity: 1; transform: translateY(0); }
+    .dt-toast.dt-toast-out { opacity: 0; transform: translateY(10px); }
+    .dt-toast-error { border-color: rgba(239,68,68,.45) !important;
+                      box-shadow: 0 8px 32px rgba(2,6,23,.6), 0 0 24px rgba(239,68,68,.18); }
+    .dt-toast-success { border-color: rgba(16,185,129,.45) !important;
+                        box-shadow: 0 8px 32px rgba(2,6,23,.6), 0 0 24px rgba(16,185,129,.15); }
+
+    /* ── Scrollbar ──────────────────────────────────────────── */
+    #telemetry-container::-webkit-scrollbar { width: 6px; }
+    #telemetry-container::-webkit-scrollbar-track { background: transparent; }
+    #telemetry-container::-webkit-scrollbar-thumb { background: rgba(71,85,105,.5); border-radius: 9999px; }
+
+    /* ── Filter chips ───────────────────────────────────────── */
+    .filter-btn {
+      border-radius: 8px; border: 1px solid rgba(148,163,184,.14);
+      background: rgba(15,23,42,.6); padding: 5px 11px; font-size: 11px;
+      font-weight: 600; letter-spacing: .02em; color: #94a3b8;
+      transition: all .15s ease; cursor: pointer;
+    }
+    .filter-btn:hover { border-color: rgba(56,189,248,.4); color: #e2e8f0; }
+    .filter-btn.is-active {
+      border-color: rgba(56,189,248,.55); background: rgba(56,189,248,.14);
+      color: #7dd3fc; box-shadow: 0 0 12px rgba(56,189,248,.12) inset;
+    }
+
+    /* ── Chart container fixes Chart.js resize quirks ───────── */
+    .chart-box { position: relative; height: 190px; }
+    .dt-tooltip.leaflet-tooltip {
+      background: rgba(17,28,48,.92); border: 1px solid rgba(56,189,248,.35);
+      color: #e2e8f0; box-shadow: 0 8px 24px rgba(2,6,23,.5);
+      font-size: 12px; font-weight: 600;
+    }
+
+    /* ============================================================
+       HUMAN TOUCH — warm glass, soft shadows, tactile edges
+       The UI should feel like a well-worn ops desk, not a sci-fi
+       render: warmer slate tint, bigger radii, softer borders, a
+       gentle entrance drift, and comfortably readable labels.
+       ============================================================ */
+    .glass {
+      background: linear-gradient(160deg, rgba(16,24,42,.86) 0%, rgba(11,17,32,.74) 100%);
+      border: 1px solid rgba(148,163,184,.16);
+      border-radius: 16px;
+      box-shadow: 0 10px 34px rgba(2,6,23,.45), inset 0 1px 0 rgba(255,255,255,.05);
+    }
+    header.glass, #sidebar { border-radius: 0; }   /* chrome panels stay full-bleed */
+
+    /* Cards breathe: rounded, hover lift, springy press */
+    .facility-card { border-radius: 14px !important; transition: all .22s ease; }
+    .facility-card:hover { transform: translateY(-1px); }
+    .facility-card:active { transform: translateY(0) scale(.995); }
+
+    /* Hand-set type: relaxed leading for sidebar meta text */
+    #sidebar p { letter-spacing: .01em; line-height: 1.5; }
+
+    /* Panels drift in at a human pace */
+    @keyframes rise-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    #predictions-hud { animation: rise-in .6s ease both; }
+    #anomaly-banner  { animation: rise-in .5s ease both; }
+
+    /* Buttons feel pressed, not flashed */
+    button { -webkit-tap-highlight-color: transparent; }
+    .filter-btn { border-radius: 10px; padding: 6px 14px; font-size: 12px; transition: all .2s ease; }
+    .filter-btn:active { transform: scale(.97); }
+
+    /* Map name tags: glass wayfinding labels for big landmarks */
+    .dt-map-label.leaflet-tooltip {
+      background: rgba(13,20,38,.78);
+      border: 1px solid rgba(148,163,184,.22);
+      border-radius: 9999px;
+      color: #e2e8f0;
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 11px; font-weight: 600; letter-spacing: .03em;
+      padding: 3px 10px;
+      box-shadow: 0 4px 14px rgba(2,6,23,.45);
+      backdrop-filter: blur(6px);
+    }
+    .dt-map-label.leaflet-tooltip-top::before { display: none; }   /* no arrow — cleaner tag */
+
+    /* Sidebar scrollbar: warm thumb */
+    #telemetry-container::-webkit-scrollbar-thumb { background: rgba(100,116,139,.55); }
+  </style>
+</head>
+
+<body class="h-full bg-surface text-slate-200 antialiased overflow-hidden">
+  <div class="flex h-full w-full flex-col">
+
+    <!-- ================= NAVBAR ================= ============== -->
+    <header class="glass relative z-[1100] flex h-14 shrink-0 items-center justify-between px-4">
+      <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-sky-500/60 to-transparent"></div>
+
+      <div class="flex items-center gap-4">
+        <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-sky-400 to-cyan-600 shadow-lg shadow-sky-500/20">
+          <svg class="h-5 w-5 text-slate-950" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3m10-11v10a1 1 0 001 1h3m10-11v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001 1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+          </svg>
+        </div>
+        <h1 class="hidden text-base font-bold tracking-wide text-slate-100 md:block sm:text-lg">
+          IIT Delhi <span class="font-light text-slate-500">//</span>
+          <span class="bg-gradient-to-r from-sky-400 via-cyan-300 to-sky-500 bg-clip-text font-semibold text-transparent">Campus Command Center</span>
+        </h1>
+
+        <!-- WS connection badge -->
+        <span id="status-badge"
+              class="hidden items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-amber-400 sm:inline-flex">
+          <span class="relative flex h-2 w-2">
+            <span id="conn-ping" class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+            <span id="conn-dot" class="relative inline-flex h-2 w-2 rounded-full bg-amber-400"></span>
+          </span>
+          <span id="status-label">Connecting…</span>
+        </span>
+      </div>
+
+      <!-- Right cluster: transport chip + clock + reset -->
+      <div class="flex items-center gap-3">
+        <div class="glass hidden items-center gap-2 rounded-lg px-3 py-1.5 sm:flex"
+             title="Live WebSocket stream — ws://localhost:8000/ws">
+          <span id="conn-chip-dot" class="h-1.5 w-1.5 rounded-full" style="background:#fbbf24"></span>
+          <span id="conn-chip-text" class="font-mono text-[11px] font-semibold" style="color:#fbbf24">WS CONNECTING…</span>
+        </div>
+
+        <div class="glass flex items-center gap-2 rounded-lg px-3 py-1.5">
+          <svg class="h-3.5 w-3.5 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span id="live-clock" class="font-mono text-sm font-semibold tabular-nums text-slate-200">--:--:--</span>
+        </div>
+
+        <button id="btn-reset" title="POST /api/reset — restore demo baseline"
+                class="glass hidden rounded-lg px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-red-500/40 hover:text-red-300 sm:block">
+          Reset Demo
+        </button>
+
+        <!-- ⚡ Chaos console: on-demand anomaly trigger for demos -->
+        <div id="chaos-console" class="glass hidden items-center gap-1.5 rounded-lg px-2 py-1.5 sm:flex">
+          <select id="chaos-select"
+                  class="max-w-[150px] cursor-pointer rounded-md border-0 bg-transparent py-0.5 pl-1 pr-4 text-[11px] font-semibold text-amber-300 outline-none"
+                  style="appearance:none; background-image:url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"6\" viewBox=\"0 0 8 6\"><path fill=\"%23fbbf24\" d=\"M0 0h8L4 6z\"/></svg>'); background-repeat:no-repeat; background-position:right 4px center;">
+            <option value="random">⚡ Random</option>
+          </select>
+          <button id="btn-chaos" title="Fire the selected environmental anomaly NOW"
+                  class="rounded-md bg-amber-500/15 px-2.5 py-1 text-[11px] font-bold text-amber-300 ring-1 ring-amber-500/40 transition hover:bg-amber-500/25 hover:text-amber-200">
+            Cause Chaos ⚡
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- ================= MAIN VIEWPORT ========================= -->
+    <div class="flex min-h-0 flex-1">
+
+      <!-- ---------- SIDEBAR ---------------------------------- -->
+      <aside id="sidebar" class="glass relative z-[1000] flex w-80 shrink-0 flex-col">
+        <button id="btn-collapse" title="Toggle sidebar"
+                class="absolute -right-3.5 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-700 bg-surface-raised text-slate-400 shadow-lg transition hover:border-sky-500/60 hover:text-sky-400">
+          <svg id="icon-chevron" class="h-4 w-4 transition-transform duration-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        <div id="sidebar-content" class="sidebar-content flex min-h-0 flex-1 flex-col">
+          <div class="border-b border-slate-800/60 px-5 pb-4 pt-5">
+            <h2 class="text-sm font-semibold uppercase tracking-[0.18em] text-slate-300">Facility Overview</h2>
+            <p class="mt-1 text-xs text-slate-500">Live WS telemetry · IIT Delhi · 14 facilities</p>
+          </div>
+
+          <!-- Quick filters -->
+          <div class="border-b border-slate-800/60 px-5 py-4">
+            <p class="mb-2.5 text-[10px] font-semibold uppercase tracking-widest text-slate-600">Quick Filters</p>
+            <div id="filter-group" class="flex flex-wrap gap-1.5">
+              <button data-filter="all"      class="filter-btn is-active">All</button>
+              <button data-filter="academic" class="filter-btn">Academic</button>
+              <button data-filter="labs"     class="filter-btn">Labs</button>
+              <button data-filter="parking"  class="filter-btn">Parking</button>
+              <button data-filter="housing"  class="filter-btn">Hostels</button>
+              <button data-filter="social"   class="filter-btn">Social</button>
+            </div>
+          </div>
+
+          <div id="telemetry-container" class="min-h-0 flex-1 overflow-y-auto">
+            <!-- LIST VIEW -->
+            <div id="facility-list" class="space-y-2 p-4"></div>
+
+            <!-- DETAIL VIEW (facility + Chart.js trend) -->
+            <div id="facility-detail" class="hidden p-4"></div>
+
+            <!-- EMPTY STATE -->
+            <div id="empty-state"
+                 class="m-4 flex h-full min-h-[240px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-700/80 bg-surface/40 px-6 text-center">
+              <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-sky-500/10 ring-1 ring-sky-500/20">
+                <svg class="h-6 w-6 animate-pulse text-sky-400/80" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <p id="empty-state-title" class="text-base font-semibold text-slate-200">Opening WebSocket…</p>
+              <p class="mt-1.5 text-xs leading-relaxed text-slate-500">
+                Streaming <span class="font-mono text-slate-400">ws://localhost:8000/ws</span> —
+                zones appear the moment telemetry lands.
+              </p>
+              <div class="mt-4 flex items-center gap-1.5 rounded-full bg-slate-800/60 px-3 py-1">
+                <span id="empty-state-dot" class="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400"></span>
+                <span id="empty-state-label" class="text-[10px] font-medium uppercase tracking-wider text-slate-500">Handshake in progress</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-t border-slate-800/60 px-5 py-3">
+            <p class="text-[10px] text-slate-600">IIT Delhi Campus Twin v2.1 — <span class="text-slate-500">WebSocket Edition</span></p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ---------- MAP VIEWPORT ------------------------------ -->
+      <main class="relative min-w-0 flex-1">
+        <div id="map"></div>
+
+        <!-- Anomaly banner (top-center, glass, scanline) -->
+        <div id="anomaly-banner"
+             class="anomaly-hidden absolute left-1/2 top-4 z-[1000] w-[min(480px,90%)] -translate-x-1/2 overflow-hidden rounded-xl border border-amber-500/40 px-4 py-3"
+             style="background: rgba(11,17,32,.82); backdrop-filter: blur(12px); box-shadow: 0 8px 32px rgba(2,6,23,.6), 0 0 24px rgba(245,158,11,.12);">
+          <div class="anomaly-scanline pointer-events-none absolute inset-y-0 left-0 w-1/4 bg-gradient-to-r from-transparent via-amber-400/10 to-transparent"></div>
+          <div class="flex items-start gap-3">
+            <span id="anomaly-icon" class="text-xl leading-none">⛈️</span>
+            <div class="min-w-0">
+              <p id="anomaly-title" class="text-sm font-bold text-amber-300">Anomaly</p>
+              <p id="anomaly-narrative" class="mt-0.5 text-xs leading-relaxed text-slate-300">Narrative</p>
+            </div>
+            <button id="anomaly-close" class="ml-auto shrink-0 text-slate-500 transition hover:text-slate-200">✕</button>
+          </div>
+        </div>
+
+        <!-- Predictive HUD (top-right): 60-min breach queue -->
+        <div id="predictions-hud" class="glass absolute right-4 top-4 z-[1000] w-64 rounded-xl p-3.5">
+          <div class="flex items-center justify-between">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400">60-min Forecast</p>
+            <span class="relative flex h-1.5 w-1.5">
+              <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-60"></span>
+              <span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-sky-400"></span>
+            </span>
+          </div>
+          <p class="mt-1 text-[10px] leading-relaxed text-slate-500">Moving-average projection · auto-refresh</p>
+          <div id="predictions-list" class="mt-2.5 space-y-1.5">
+            <p class="text-xs text-slate-500">Waiting for model warm-up…</p>
+          </div>
+        </div>
+
+        <!-- Bottom-left HUD: lat/lng + legend + transport -->
+        <div class="pointer-events-none absolute bottom-4 left-4 z-[1000] flex flex-col gap-2">
+          <div class="glass flex items-center gap-2 rounded-lg px-3 py-1.5">
+            <span class="h-1.5 w-1.5 rounded-full bg-sky-400"></span>
+            <span id="latlng-readout" class="font-mono text-xs tabular-nums text-slate-300">28.5450, 77.1926</span>
+          </div>
+          <div class="glass flex items-center gap-3 rounded-lg px-3 py-1.5">
+            <span class="flex items-center gap-1.5 text-[10px] font-medium text-slate-400">
+              <span class="h-2 w-2 rounded-full" style="background:#10B981"></span>&lt;60%
+            </span>
+            <span class="flex items-center gap-1.5 text-[10px] font-medium text-slate-400">
+              <span class="h-2 w-2 rounded-full" style="background:#F59E0B"></span>60–85%
+            </span>
+            <span class="flex items-center gap-1.5 text-[10px] font-medium text-slate-400">
+              <span class="h-2 w-2 rounded-full" style="background:#EF4444"></span>&gt;85%
+            </span>
+          </div>
+          <div class="glass flex items-center gap-2 rounded-lg px-3 py-1.5">
+            <span id="tick-dot" class="h-1.5 w-1.5 rounded-full" style="background:#10B981"></span>
+            <span id="tick-label" class="font-mono text-[10px] font-semibold text-slate-400">awaiting stream…</span>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Toast root -->
+  <div id="toast-root"
+       class="pointer-events-none fixed bottom-6 left-1/2 z-[2000] flex -translate-x-1/2 flex-col items-center gap-2"></div>
+
+  <!-- ============================================================
+       APPLICATION SCRIPT — see app.js
+       ============================================================ -->
+  <script src="app.js"></script>
+</body>
+</html>

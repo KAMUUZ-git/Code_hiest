@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime artifacts
+data/campus.db
+data/*.db-journal
+
+# Codebuff workspace state
+.freebuff/
+
+# OS / editor
+.DS_Store

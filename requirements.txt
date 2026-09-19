@@ -1,0 +1,18 @@
+# ============================================================
+#  CAMPUS DIGITAL TWIN v2 — Dependency Manifest
+#  Target runtime: Python 3.9 – 3.12
+# ============================================================
+
+# ── Backend Engine ──────────────────────────────────────────
+fastapi==0.111.0            # REST + native WebSocket support
+uvicorn[standard]==0.29.0   # ASGI server; [standard] pulls websockets + httptools
+
+# ── Persistence (SQLite historical occupancy store) ─────────
+sqlmodel==0.0.16            # SQLAlchemy 2.0 + Pydantic v2 hybrid ORM
+sqlalchemy==2.0.30          # explicit pin for reproducible builds
+
+# ── Validation layer ────────────────────────────────────────
+pydantic==2.7.1             # request/response schemas (installed with fastapi, pinned here)
+
+# ── Simulator (HTTP fallback client) ────────────────────────
+requests==2.32.3            # optional: push-mode telemetry client
