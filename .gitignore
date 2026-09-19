@@ -11,5 +11,8 @@ data/*.db-journal
 # Codebuff workspace state
 .freebuff/
 
+# Local GitHub push credentials (never commit!)
+.github_token
+
 # OS / editor
 .DS_Store
