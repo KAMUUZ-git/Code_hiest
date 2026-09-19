@@ -6,6 +6,11 @@ predictive analytics (60-min breach forecast)**, a **multithreaded
 autonomous simulator** with cascading environmental anomalies, and a
 **glassmorphism command center** (Leaflet + Chart.js).
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/KAMUUZ-git/Code_hiest)
+
+> 🚀 **Deploying for free?** See **[DEPLOY.md](DEPLOY.md)** — Render +
+> Supabase, click-by-click, zero cost.
+
 ---
 
 ## Architecture
@@ -39,6 +44,8 @@ autonomous simulator** with cascading environmental anomalies, and a
 ├── index.html                     # Frontend shell (Tailwind + Leaflet + Chart.js)
 ├── app.js                         # Frontend logic: WS client, chart, markers, HUD
 ├── requirements.txt
+├── render.yaml                    # Render blueprint (one-click free deploy)
+├── DEPLOY.md                      # Step-by-step free cloud deployment guide
 ├── README.md
 ├── data/                          # SQLite database (auto-created)
 │   └── campus.db

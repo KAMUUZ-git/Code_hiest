@@ -11,6 +11,9 @@ uvicorn[standard]==0.29.0   # ASGI server; [standard] pulls websockets + httptoo
 sqlmodel==0.0.16            # SQLAlchemy 2.0 + Pydantic v2 hybrid ORM
 sqlalchemy==2.0.30          # explicit pin for reproducible builds
 
+# ── Cloud persistence (Supabase Postgres on Render free tier) ──
+psycopg2-binary==2.9.9      # only used when DATABASE_URL points at Postgres
+
 # ── Validation layer ────────────────────────────────────────
 pydantic==2.7.1             # request/response schemas (installed with fastapi, pinned here)
 

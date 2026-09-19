@@ -6,15 +6,24 @@
 Persistence contract
 --------------------
 - One `OccupancyRecord` row per facility per telemetry tick.
-- SQLite is THE system of record: on restart the backend
+- The database is THE system of record: on restart the backend
   re-seeds current state from the newest row per facility.
 - Writes are batched/serialized through a single background
   writer to keep SQLite happy under concurrent ticks.
+
+Backend selection (for free-tier cloud deploys)
+-----------------------------------------------
+- Default (no env var): local SQLite at ./data/campus.db — zero setup.
+- CAMPUS_TWIN_DATABASE_URL / DATABASE_URL set: any SQLAlchemy URL.
+  On Render + Supabase, paste the Supabase connection string
+  (Session Pooler URI, port 5432) and the twin persists to Postgres
+  so history survives redeploys (Render free disks are ephemeral).
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,20 +33,47 @@ from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 logger = logging.getLogger("campus_twin.db")
 
-# ── Database location (project root /data/campus.db) ─────────
-DB_DIR = Path(__file__).resolve().parent.parent / "data"
-DB_FILE = DB_DIR / "campus.db"
-DATABASE_URL = f"sqlite:///{DB_FILE}"
+# ── Database location ────────────────────────────────────────
+# 1. Explicit env var wins (CAMPUS_TWIN_DATABASE_URL, then DATABASE_URL —
+#    the latter is what most PaaS providers set for managed databases).
+# 2. Otherwise: local SQLite at <project>/data/campus.db (the default).
 
-# ── SQLAlchemy engine tuning for SQLite ──────────────────────
-# check_same_thread=False : the engine is shared across the uvicorn
-# event loop + simulator threads; every access still goes through
-# short-lived Sessions and the write lock below.
-engine = create_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args={"check_same_thread": False},
+# Supabase/Render hand out 'postgresql://' URIs; SQLAlchemy ≥2.0 wants
+# the 'postgresql+psycopg2://' driver-qualified form. Rewrite transparently.
+def _normalize_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg2://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + url[len("postgresql://"):]
+    return url
+
+
+DATABASE_URL = os.environ.get(
+    "CAMPUS_TWIN_DATABASE_URL", os.environ.get("DATABASE_URL", "")
 )
+
+if DATABASE_URL:
+    DATABASE_URL = _normalize_url(DATABASE_URL)
+    IS_SQLITE = DATABASE_URL.startswith("sqlite")
+else:
+    DB_DIR = Path(__file__).resolve().parent.parent / "data"
+    DB_FILE = DB_DIR / "campus.db"
+    DATABASE_URL = f"sqlite:///{DB_FILE}"
+    IS_SQLITE = True
+
+# ── Engine tuning ────────────────────────────────────────────
+# SQLite: check_same_thread=False lets the engine be shared across the
+#   uvicorn event loop + simulator threads; every access still goes
+#   through short-lived Sessions and the write lock below.
+# Postgres (Supabase): no special args, but a conservative pool size
+#   fits the free-tier connection limits comfortably.
+_engine_kwargs: dict = {"echo": False}
+if IS_SQLITE:
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    _engine_kwargs.update(pool_size=5, max_overflow=5, pool_pre_ping=True)
+
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -86,10 +122,14 @@ def init_db() -> None:
     with _init_lock:
         if _initialized:
             return
-        DB_DIR.mkdir(parents=True, exist_ok=True)
+        if IS_SQLITE:
+            DB_DIR.mkdir(parents=True, exist_ok=True)
         SQLModel.metadata.create_all(engine)
         _initialized = True
-        logger.info("🗄️  SQLite ready at %s", DB_FILE)
+        # Log only the host part — never the user:password@ credentials.
+        safe_target = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL
+        logger.info("🗄️  Database ready (%s): %s",
+                    "sqlite" if IS_SQLITE else "postgres", safe_target)
 
 
 def insert_records(records: Iterable[OccupancyRecord]) -> int:

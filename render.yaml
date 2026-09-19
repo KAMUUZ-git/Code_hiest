@@ -1,0 +1,40 @@
+# ============================================================
+#  CAMPUS DIGITAL TWIN — Render Blueprint
+#  -----------------------------------------------------------
+#  Deploys the full platform (FastAPI + WebSockets + simulator
+#  threads + dashboard) to a free Render web service, straight
+#  from this GitHub repo.
+#
+#  Use it either way:
+#   1. Render Dashboard → New + → Blueprint → pick this repo
+#      (Render reads this file automatically), or
+#   2. "Deploy to Render" button in README.md.
+#
+#  Free-tier notes
+#  ---------------
+#  - Free instances sleep after ~15 min idle; the first request
+#    afterwards takes ~30-60 s to wake. Ping /api/health or just
+#    reload the dashboard to wake it.
+#  - The free disk is EPHEMERAL: SQLite history resets on every
+#    deploy/restart. Add a Supabase Postgres DATABASE_URL env var
+#    (see DEPLOY.md) for persistent history — zero code changes.
+#  - WebSockets work natively on Render (no config needed).
+# ============================================================
+
+services:
+  - type: web
+    name: campus-digital-twin
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # Render injects $PORT; bind 0.0.0.0 so the platform can route to us.
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      # Optional persistent history: create a free Supabase project,
+      # copy the Session Pooler connection string, and paste it here in
+      # the Render dashboard (never commit real credentials).
+      - key: DATABASE_URL
+        sync: false
